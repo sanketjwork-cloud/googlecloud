@@ -1,69 +1,103 @@
-import express from "express";
+import http from "http";
+import { URL } from "url";
 import fetch from "node-fetch";
 
-const app = express();
 const PORT = process.env.PORT || 8080;
-const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+const API_KEY = process.env.YOUTUBE_API_KEY;
 
-// ---- Health Check ----
-app.get("/", (req, res) => {
-  res.json({ status: "ok", generatedAt: new Date().toISOString() });
-});
+console.log("🚀 Booting Sarcastic Baby AI Agent...");
+console.log("PORT:", PORT);
+console.log("API KEY present:", Boolean(API_KEY));
 
-// ---- Search Endpoint ----
-app.get("/search", async (req, res) => {
-  if (!YOUTUBE_API_KEY) return res.status(500).json({ error: "Missing YOUTUBE_API_KEY" });
+const DISCOVERY_KEYWORD = "funny baby";
+const CORE_KEYWORDS = [
+  "sarcastic baby",
+  "baby inner thoughts",
+  "baby judging parents"
+];
 
-  try {
-    const DISCOVERY_KEYWORD = "funny baby";
-    const CORE_KEYWORDS = [
-      "sarcastic baby",
-      "baby inner thoughts",
-      "baby judging parents",
-      "baby with adult voice",
-      "baby POV comedy"
-    ];
+const server = http.createServer(async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Content-Type", "application/json");
 
-    const results = [];
+  const url = new URL(req.url, `http://${req.headers.host}`);
 
-    for (const keyword of [DISCOVERY_KEYWORD, ...CORE_KEYWORDS]) {
-      const searchData = await fetch(
-        `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=5&q=${encodeURIComponent(
-          keyword
-        )}&key=${YOUTUBE_API_KEY}`
-      ).then((r) => r.json());
+  // Root health check
+  if (url.pathname === "/") {
+    return res.end(
+      JSON.stringify({
+        status: "ok",
+        message: "Sarcastic Baby AI Agent is running 🚀",
+        generatedAt: new Date().toISOString()
+      })
+    );
+  }
 
-      if (!searchData.items) continue;
-
-      for (const item of searchData.items) {
-        const videoId = item.id.videoId;
-        const statsData = await fetch(
-          `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoId}&key=${YOUTUBE_API_KEY}`
-        ).then((r) => r.json());
-
-        const video = statsData.items?.[0];
-        const views = parseInt(video?.statistics?.viewCount || "0", 10);
-
-        if (views >= 100000) {
-          results.push({
-            keyword,
-            videoId,
-            title: item.snippet.title,
-            channel: item.snippet.channelTitle,
-            views,
-            publishedAt: item.snippet.publishedAt
-          });
-        }
-      }
+  // Shorts endpoint with keyword search
+  if (url.pathname === "/shorts") {
+    if (!API_KEY) {
+      return res.end(JSON.stringify({ error: "Missing YOUTUBE_API_KEY" }));
     }
 
-    res.json({ generatedAt: new Date().toISOString(), count: results.length, videos: results });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    try {
+      const results = [];
+
+      // Loop over keywords one by one (sequentially to avoid free tier limits)
+      for (const keyword of [DISCOVERY_KEYWORD, ...CORE_KEYWORDS]) {
+        const searchRes = await fetch(
+          `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=3&q=${encodeURIComponent(
+            keyword
+          )}&key=${API_KEY}`
+        ).then(r => r.json());
+
+        if (!searchRes.items) continue;
+
+        for (const item of searchRes.items) {
+          const videoId = item.id.videoId;
+
+          const statsRes = await fetch(
+            `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoId}&key=${API_KEY}`
+          ).then(r => r.json());
+
+          const video = statsRes.items?.[0];
+          const views = parseInt(video?.statistics?.viewCount || "0", 10);
+
+          // Only include videos over 100k views
+          if (views >= 100000) {
+            results.push({
+              keyword,
+              videoId,
+              title: item.snippet.title,
+              channel: item.snippet.channelTitle,
+              durationSec: 0, // optional: you can fetch duration if needed
+              views,
+              publishedAt: item.snippet.publishedAt,
+              hashtags: [] // optional: parse from description if needed
+            });
+          }
+        }
+      }
+
+      res.end(
+        JSON.stringify({
+          generatedAt: new Date().toISOString(),
+          keywordUsed: DISCOVERY_KEYWORD,
+          count: results.length,
+          shorts: results
+        })
+      );
+    } catch (err) {
+      res.end(JSON.stringify({ error: err.message }));
+    }
+
+    return;
   }
+
+  res.statusCode = 404;
+  res.end(JSON.stringify({ error: "Not found" }));
 });
 
-// ---- Listen immediately ----
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// Listen immediately to satisfy Cloud Run
+server.listen(PORT, () => {
+  console.log(`✅ Server listening on port ${PORT}`);
 });
