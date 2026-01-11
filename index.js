@@ -1,120 +1,114 @@
-import express from "express";
-import fetch from "node-fetch";
+import http from "http";
+import { URL } from "url";
 
-const app = express();
 const PORT = process.env.PORT || 8080;
-const API_KEY = process.env.YOUTUBE_API_KEY;
+const API_KEY = process.env.YOUTUBE_API_KEY || "";
 
-if (!API_KEY) {
-  throw new Error("Missing YOUTUBE_API_KEY");
-}
+console.log("🚀 Booting YouTube Trend Agent");
+console.log("PORT:", PORT);
+console.log("API KEY present:", Boolean(API_KEY));
 
 const KEYWORDS = [
   "baby",
   "cute baby",
-  "baby laughing",
-  "baby dance",
+  "baby laugh",
   "ai baby",
-  "baby animation"
+  "baby dance"
 ];
 
-const MIN_VIEWS = 100_000;
-const MAX_DURATION_SEC = 15;
-const MAX_RESULTS = 50;
+const server = http.createServer(async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Content-Type", "application/json");
 
-const isoDurationToSeconds = (iso) => {
-  const match = iso.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
-  const min = parseInt(match?.[1] || 0);
-  const sec = parseInt(match?.[2] || 0);
-  return min * 60 + sec;
-};
+  const url = new URL(req.url, `http://${req.headers.host}`);
 
-const daysSince = (publishedAt) => {
-  const published = new Date(publishedAt);
-  const now = new Date();
-  const diffMs = now - published;
-  return Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
-};
+  // 🔹 Health check
+  if (url.pathname === "/") {
+    return res.end(JSON.stringify({
+      status: "ok",
+      message: "YouTube AI Agent is running 🚀",
+      generatedAt: new Date().toISOString()
+    }));
+  }
 
-const extractHashtags = (text = "") =>
-  [...text.matchAll(/#\w+/g)].map(m => m[0]);
+  // 🔹 Shorts discovery
+  if (url.pathname === "/shorts") {
+    if (!API_KEY) {
+      return res.end(JSON.stringify({
+        error: "Missing YOUTUBE_API_KEY",
+        count: 0,
+        shorts: []
+      }));
+    }
 
-app.get("/", (req, res) => {
-  res.json({
-    status: "ok",
-    message: "YouTube AI Agent is running 🚀",
-    generatedAt: new Date().toISOString()
-  });
-});
+    try {
+      const keyword = KEYWORDS[Math.floor(Math.random() * KEYWORDS.length)];
 
-app.get("/shorts", async (req, res) => {
-  try {
-    let allVideos = [];
-
-    for (const keyword of KEYWORDS) {
       const searchUrl =
-        `https://www.googleapis.com/youtube/v3/search` +
-        `?part=snippet&type=video&maxResults=${MAX_RESULTS}` +
-        `&q=${encodeURIComponent(keyword)}` +
-        `&key=${API_KEY}`;
+        "https://www.googleapis.com/youtube/v3/search" +
+        `?part=snippet&type=video&maxResults=5&q=${encodeURIComponent(keyword)}` +
+        `&order=viewCount&key=${API_KEY}`;
 
       const searchRes = await fetch(searchUrl);
       const searchData = await searchRes.json();
 
-      if (!searchData.items) continue;
+      if (!searchData.items) {
+        throw new Error("No items returned");
+      }
 
       const videoIds = searchData.items.map(v => v.id.videoId).join(",");
 
       const detailsUrl =
-        `https://www.googleapis.com/youtube/v3/videos` +
-        `?part=contentDetails,statistics,snippet&id=${videoIds}` +
+        "https://www.googleapis.com/youtube/v3/videos" +
+        `?part=snippet,statistics,contentDetails&id=${videoIds}` +
         `&key=${API_KEY}`;
 
       const detailsRes = await fetch(detailsUrl);
       const detailsData = await detailsRes.json();
 
-      if (!detailsData.items) continue;
+      const shorts = detailsData.items
+        .map(v => {
+          const duration = v.contentDetails.duration;
+          const seconds =
+            parseInt(duration.match(/(\d+)S/)?.[1] || 0) +
+            (parseInt(duration.match(/(\d+)M/)?.[1] || 0) * 60);
 
-      for (const video of detailsData.items) {
-        const durationSec = isoDurationToSeconds(video.contentDetails.duration);
-        const views = Number(video.statistics.viewCount || 0);
+          return {
+            videoId: v.id,
+            title: v.snippet.title,
+            channel: v.snippet.channelTitle,
+            views: Number(v.statistics.viewCount || 0),
+            durationSec: seconds,
+            publishedAt: v.snippet.publishedAt,
+            trendScore: Math.round(
+              (Number(v.statistics.viewCount || 0) / Math.max(seconds, 1)) / 1000
+            )
+          };
+        })
+        .filter(v => v.durationSec <= 15 && v.views >= 100000)
+        .sort((a, b) => b.trendScore - a.trendScore);
 
-        if (durationSec > MAX_DURATION_SEC) continue;
-        if (views < MIN_VIEWS) continue;
+      return res.end(JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        keywordUsed: keyword,
+        count: shorts.length,
+        shorts
+      }));
 
-        const ageInDays = daysSince(video.snippet.publishedAt);
-        const trendScore = Math.round(views / ageInDays);
-
-        allVideos.push({
-          videoId: video.id,
-          title: video.snippet.title,
-          channel: video.snippet.channelTitle,
-          keyword,
-          durationSec,
-          views,
-          ageInDays,
-          trendScore,
-          publishedAt: video.snippet.publishedAt,
-          hashtags: extractHashtags(video.snippet.description)
-        });
-      }
+    } catch (err) {
+      console.error("❌ Shorts error:", err.message);
+      return res.end(JSON.stringify({
+        error: "Failed to fetch shorts",
+        count: 0,
+        shorts: []
+      }));
     }
-
-    // 🔥 Sort by Trend Score (highest first)
-    allVideos.sort((a, b) => b.trendScore - a.trendScore);
-
-    res.json({
-      generatedAt: new Date().toISOString(),
-      count: allVideos.length,
-      shorts: allVideos
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
   }
+
+  res.statusCode = 404;
+  res.end(JSON.stringify({ error: "Not found" }));
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`✅ Server listening on port ${PORT}`);
 });
