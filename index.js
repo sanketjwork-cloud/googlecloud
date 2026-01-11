@@ -1,63 +1,42 @@
-import express from "express";
-import fetch from "node-fetch";
+import http from "http";
 
-const app = express();
-
-// ✅ CRITICAL: Cloud Run injects PORT
 const PORT = process.env.PORT || 8080;
 
-app.get("/", (req, res) => {
-  res.json({
-    status: "ok",
-    message: "YouTube AI Agent is running 🚀",
-    generatedAt: new Date().toISOString()
-  });
-});
+const server = http.createServer(async (req, res) => {
+  // Allow browser & Make.com
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Content-Type", "application/json");
 
-app.get("/shorts", async (req, res) => {
-  try {
-    const API_KEY = process.env.YOUTUBE_API_KEY;
-    if (!API_KEY) {
-      throw new Error("Missing YOUTUBE_API_KEY env variable");
-    }
-
-    const query = req.query.q || "AI baby cute";
-    const maxResults = 25;
-
-    const url =
-      `https://www.googleapis.com/youtube/v3/search` +
-      `?part=snippet` +
-      `&type=video` +
-      `&videoDuration=short` +
-      `&order=viewCount` +
-      `&q=${encodeURIComponent(query)}` +
-      `&maxResults=${maxResults}` +
-      `&key=${API_KEY}`;
-
-    const r = await fetch(url);
-    const d = await r.json();
-
-    const shorts = (d.items || []).map(v => ({
-      videoId: v.id.videoId,
-      title: v.snippet.title,
-      channel: v.snippet.channelTitle,
-      publishedAt: v.snippet.publishedAt,
-      videoUrl: `https://youtube.com/shorts/${v.id.videoId}`
-    }));
-
-    res.json({
-      generatedAt: new Date().toISOString(),
-      keyword: query,
-      count: shorts.length,
-      shorts
-    });
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  // Root health check (VERY IMPORTANT)
+  if (req.url === "/" && req.method === "GET") {
+    res.writeHead(200);
+    res.end(
+      JSON.stringify({
+        status: "ok",
+        message: "YouTube AI Agent is running 🚀",
+        generatedAt: new Date().toISOString()
+      })
+    );
+    return;
   }
+
+  // Shorts endpoint (placeholder logic for now)
+  if (req.url.startsWith("/shorts") && req.method === "GET") {
+    res.writeHead(200);
+    res.end(
+      JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        shorts: []
+      })
+    );
+    return;
+  }
+
+  // Fallback
+  res.writeHead(404);
+  res.end(JSON.stringify({ error: "Route not found" }));
 });
 
-// 🔥 THIS LINE IS WHAT CLOUD RUN NEEDS
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
