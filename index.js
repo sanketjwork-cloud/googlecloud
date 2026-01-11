@@ -1,39 +1,48 @@
-// index.js
-const express = require("express");
-const app = express();
+import http from "http";
+import { URL } from "url";
+import fetch from "node-fetch";
 
-// Pull port from environment variable or default to 8080
 const PORT = process.env.PORT || 8080;
+const API_KEY = process.env.YOUTUBE_API_KEY;
 
-// Core data for /shorts
-const shortsData = {
-  discoveryKeyword: "satirical baby reactions",
-  coreKeywords: [
-    "judging parents humor",
-    "1 year old wit",
-    "baby sarcasm shorts",
-    "funny baby commentary",
-    "baby adult voice"
-  ],
-  message: "Server is up, keywords ready!"
-};
+if (!API_KEY) {
+  console.error("❌ Missing YOUTUBE_API_KEY");
+  process.exit(1);
+}
 
-// Route: root / → redirect to /shorts
-app.get("/", (req, res) => {
-  res.redirect("/shorts");
-});
+console.log("🚀 YouTube AI Shorts Agent starting...");
+console.log("PORT:", PORT);
 
-// Route: /shorts → returns JSON
-app.get("/shorts", (req, res) => {
-  res.json(shortsData);
-});
+const DISCOVERY_KEYWORD = "satirical baby reactions";
+const CORE_KEYWORDS = [
+  "judging parents humor",
+  "1 year old wit",
+  "baby sarcasm shorts",
+  "funny baby commentary",
+  "baby adult voice"
+];
 
-// Health check (optional, good for Cloud Run)
-app.get("/health", (req, res) => {
-  res.send("ok");
-});
+// Helper: fetch shorts from YouTube
+async function fetchShorts(keyword) {
+  const query = encodeURIComponent(keyword);
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=15&q=${query}&key=${API_KEY}`;
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+    if (!data.items) return { count: 0, shorts: [] };
+
+    const shorts = data.items.map((item) => {
+      const { videoId } = item.id;
+      const { title, channelTitle, publishedAt, description } = item.snippet;
+      const durationSec = 10 + Math.floor(Math.random() * 20); // placeholder
+      const views = 100000 + Math.floor(Math.random() * 1000000); // placeholder
+      const trendScore = Math.floor(views / (durationSec || 1)); // simple trend score
+      return {
+        videoId,
+        title,
+        channel: channelTitle,
+        durationSec,
+        views,
+        publishedAt,
+        trendSco
