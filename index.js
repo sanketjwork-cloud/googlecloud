@@ -1,11 +1,30 @@
+import express from "express";
+import fetch from "node-fetch";
+
+const app = express();
+
+// ✅ CRITICAL: Cloud Run injects PORT
+const PORT = process.env.PORT || 8080;
+
+app.get("/", (req, res) => {
+  res.json({
+    status: "ok",
+    message: "YouTube AI Agent is running 🚀",
+    generatedAt: new Date().toISOString()
+  });
+});
+
 app.get("/shorts", async (req, res) => {
   try {
     const API_KEY = process.env.YOUTUBE_API_KEY;
+    if (!API_KEY) {
+      throw new Error("Missing YOUTUBE_API_KEY env variable");
+    }
 
     const query = req.query.q || "AI baby cute";
     const maxResults = 25;
 
-    const searchUrl =
+    const url =
       `https://www.googleapis.com/youtube/v3/search` +
       `?part=snippet` +
       `&type=video` +
@@ -15,10 +34,10 @@ app.get("/shorts", async (req, res) => {
       `&maxResults=${maxResults}` +
       `&key=${API_KEY}`;
 
-    const searchRes = await fetch(searchUrl);
-    const searchData = await searchRes.json();
+    const r = await fetch(url);
+    const d = await r.json();
 
-    const shorts = (searchData.items || []).map(v => ({
+    const shorts = (d.items || []).map(v => ({
       videoId: v.id.videoId,
       title: v.snippet.title,
       channel: v.snippet.channelTitle,
@@ -36,4 +55,9 @@ app.get("/shorts", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// 🔥 THIS LINE IS WHAT CLOUD RUN NEEDS
+app.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
 });
