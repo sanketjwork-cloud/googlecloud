@@ -5,66 +5,45 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 
-// ---- Keyword Set (Phase 1 – FIXED) ----
-const DISCOVERY_KEYWORD = "funny baby";
-
-const CORE_KEYWORDS = [
-  "sarcastic baby",
-  "baby inner thoughts",
-  "baby judging parents",
-  "baby with adult voice",
-  "baby POV comedy"
-];
-
 // ---- Health Check ----
 app.get("/", (req, res) => {
-  res.json({
-    status: "ok",
-    message: "YouTube Keyword Search Agent running 🚀",
-    generatedAt: new Date().toISOString()
-  });
+  res.json({ status: "ok", generatedAt: new Date().toISOString() });
 });
 
-// ---- Keyword Search Endpoint ----
+// ---- Search Endpoint ----
 app.get("/search", async (req, res) => {
-  if (!YOUTUBE_API_KEY) {
-    return res.status(500).json({ error: "Missing YOUTUBE_API_KEY" });
-  }
+  if (!YOUTUBE_API_KEY) return res.status(500).json({ error: "Missing YOUTUBE_API_KEY" });
 
   try {
+    const DISCOVERY_KEYWORD = "funny baby";
+    const CORE_KEYWORDS = [
+      "sarcastic baby",
+      "baby inner thoughts",
+      "baby judging parents",
+      "baby with adult voice",
+      "baby POV comedy"
+    ];
+
     const results = [];
 
-    // We deliberately limit calls (free tier safe)
-    const keywordsToTest = [DISCOVERY_KEYWORD, ...CORE_KEYWORDS];
-
-    for (const keyword of keywordsToTest) {
-      const searchUrl =
-        `https://www.googleapis.com/youtube/v3/search` +
-        `?part=snippet&type=video&maxResults=5&q=${encodeURIComponent(keyword)}` +
-        `&key=${YOUTUBE_API_KEY}`;
-
-      const searchRes = await fetch(searchUrl);
-      const searchData = await searchRes.json();
+    for (const keyword of [DISCOVERY_KEYWORD, ...CORE_KEYWORDS]) {
+      const searchData = await fetch(
+        `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=5&q=${encodeURIComponent(
+          keyword
+        )}&key=${YOUTUBE_API_KEY}`
+      ).then((r) => r.json());
 
       if (!searchData.items) continue;
 
       for (const item of searchData.items) {
         const videoId = item.id.videoId;
+        const statsData = await fetch(
+          `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoId}&key=${YOUTUBE_API_KEY}`
+        ).then((r) => r.json());
 
-        const statsUrl =
-          `https://www.googleapis.com/youtube/v3/videos` +
-          `?part=statistics,contentDetails&id=${videoId}` +
-          `&key=${YOUTUBE_API_KEY}`;
+        const video = statsData.items?.[0];
+        const views = parseInt(video?.statistics?.viewCount || "0", 10);
 
-        const statsRes = await fetch(statsUrl);
-        const statsData = await statsRes.json();
-
-        if (!statsData.items || !statsData.items.length) continue;
-
-        const video = statsData.items[0];
-        const views = parseInt(video.statistics.viewCount || "0", 10);
-
-        // Only videos that prove demand
         if (views >= 100000) {
           results.push({
             keyword,
@@ -78,22 +57,13 @@ app.get("/search", async (req, res) => {
       }
     }
 
-    res.json({
-      generatedAt: new Date().toISOString(),
-      keywordsTested: keywordsToTest,
-      count: results.length,
-      videos: results
-    });
-
+    res.json({ generatedAt: new Date().toISOString(), count: results.length, videos: results });
   } catch (error) {
-    res.status(500).json({
-      error: "Search failed",
-      details: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// ---- Start Server ----
+// ---- Listen immediately ----
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
