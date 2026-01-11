@@ -9,13 +9,8 @@ console.log("🚀 Booting YouTube AI Agent...");
 console.log("PORT:", PORT);
 console.log("API KEY present:", Boolean(API_KEY));
 
-// Real channels to track
-const CHANNEL_IDS = [
-  "UCYOFR8S4AU2UbEyhoPvEFiA", // Ai baby trends
-  "UCUEGP4m4tQi-aWJ2G1npNcg", // Cute Baby
-  "UCqoP7gx5GR9SxbiDfXNn1qA", // Baby dance
-  "UCPEFJosRQkA8SmWBIGUlP_A"  // Healing Dreams
-];
+// Keywords to search for trending Shorts
+const SEARCH_KEYWORDS = ["baby shorts", "AI baby", "cute baby", "baby dance"];
 
 // Convert ISO 8601 duration to seconds
 function parseDurationToSeconds(duration) {
@@ -26,19 +21,22 @@ function parseDurationToSeconds(duration) {
   return minutes * 60 + seconds;
 }
 
-// Fetch Shorts-only videos from channels
-async function fetchShortsOnly() {
+// Fetch Shorts using keyword search (≤15s)
+async function fetchShortsByKeyword() {
   if (!API_KEY) {
     console.error("❌ YOUTUBE_API_KEY missing");
     return [];
   }
 
-  try {
-    let allVideos = [];
+  let allVideos = [];
 
-    for (const channelId of CHANNEL_IDS) {
-      // Search latest 50 videos from channel
-      const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&channelId=${channelId}&maxResults=50&order=date&key=${API_KEY}`;
+  for (const keyword of SEARCH_KEYWORDS) {
+    try {
+      // Search latest videos for keyword
+      const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&q=${encodeURIComponent(
+        keyword
+      )}&maxResults=50&order=date&key=${API_KEY}`;
+
       const searchRes = await fetch(searchUrl);
       const searchData = await searchRes.json();
       if (!searchData.items) continue;
@@ -51,7 +49,7 @@ async function fetchShortsOnly() {
       const detailsData = await detailsRes.json();
       if (!detailsData.items) continue;
 
-      // Filter Shorts (≤60 seconds)
+      // Filter Shorts ≤ 15 seconds
       const shorts = detailsData.items
         .map(video => {
           const durationSec = parseDurationToSeconds(video.contentDetails.duration);
@@ -64,26 +62,37 @@ async function fetchShortsOnly() {
             publishedAt: video.snippet.publishedAt
           };
         })
-        .filter(v => v.durationSec > 0 && v.durationSec <= 60);
+        .filter(v => v.durationSec > 0 && v.durationSec <= 15);
 
       allVideos = allVideos.concat(shorts);
+    } catch (err) {
+      console.error("🔥 Keyword fetch failed:", err.message);
     }
+  }
 
-    // Dummy fallback if no Shorts found
-    if (allVideos.length === 0) {
-      allVideos = [
-        { videoId: "dummy1", title: "Test Short 1", channel: "Ai baby trends", durationSec: 30, views: 1200, publishedAt: new Date().toISOString() },
-        { videoId: "dummy2", title: "Test Short 2", channel: "Cute Baby", durationSec: 45, views: 800, publishedAt: new Date().toISOString() }
-      ];
-    }
-
-    return allVideos;
-  } catch (err) {
-    console.error("🔥 Shorts fetch failed:", err.message);
-    return [
-      { videoId: "dummy1", title: "Test Short 1", channel: "Ai baby trends", durationSec: 30, views: 1200, publishedAt: new Date().toISOString() }
+  // Dummy fallback if no Shorts found
+  if (allVideos.length === 0) {
+    allVideos = [
+      {
+        videoId: "dummy1",
+        title: "Test Short 1",
+        channel: "AI Baby Trends",
+        durationSec: 10,
+        views: 1200,
+        publishedAt: new Date().toISOString()
+      },
+      {
+        videoId: "dummy2",
+        title: "Test Short 2",
+        channel: "Cute Baby",
+        durationSec: 12,
+        views: 800,
+        publishedAt: new Date().toISOString()
+      }
     ];
   }
+
+  return allVideos;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -105,7 +114,7 @@ const server = http.createServer(async (req, res) => {
 
   // Shorts endpoint
   if (url.pathname === "/shorts") {
-    const shorts = await fetchShortsOnly();
+    const shorts = await fetchShortsByKeyword();
 
     return res.end(
       JSON.stringify({
