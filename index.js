@@ -9,30 +9,59 @@ console.log("🚀 Booting YouTube AI Agent...");
 console.log("PORT:", PORT);
 console.log("API KEY present:", Boolean(API_KEY));
 
-async function fetchShorts() {
-  if (!API_KEY) {
-    console.error("❌ YOUTUBE_API_KEY missing");
-    return [];
-  }
+function parseDurationToSeconds(duration) {
+  const match = duration.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!match) return 0;
+  const minutes = parseInt(match[1] || "0", 10);
+  const seconds = parseInt(match[2] || "0", 10);
+  return minutes * 60 + seconds;
+}
+
+async function fetchShortsOnly() {
+  if (!API_KEY) return [];
 
   try {
-    // Example query – can be refined later
-    const query = "shorts";
-    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=5&q=${query}&key=${API_KEY}`;
+    // 1️⃣ Search videos
+    const searchUrl =
+      `https://www.googleapis.com/youtube/v3/search?` +
+      `part=snippet&type=video&maxResults=10&q=shorts&key=${API_KEY}`;
 
-    const response = await fetch(url);
-    const data = await response.json();
+    const searchRes = await fetch(searchUrl);
+    const searchData = await searchRes.json();
 
-    if (!data.items) return [];
+    if (!searchData.items) return [];
 
-    return data.items.map(item => ({
-      videoId: item.id.videoId,
-      title: item.snippet.title,
-      channel: item.snippet.channelTitle,
-      publishedAt: item.snippet.publishedAt
-    }));
+    const videoIds = searchData.items.map(v => v.id.videoId).join(",");
+
+    // 2️⃣ Fetch video details
+    const detailsUrl =
+      `https://www.googleapis.com/youtube/v3/videos?` +
+      `part=contentDetails,statistics,snippet&id=${videoIds}&key=${API_KEY}`;
+
+    const detailsRes = await fetch(detailsUrl);
+    const detailsData = await detailsRes.json();
+
+    if (!detailsData.items) return [];
+
+    // 3️⃣ Filter Shorts (≤ 60s)
+    const shorts = detailsData.items
+      .map(video => {
+        const durationSec = parseDurationToSeconds(video.contentDetails.duration);
+
+        return {
+          videoId: video.id,
+          title: video.snippet.title,
+          channel: video.snippet.channelTitle,
+          durationSec,
+          views: Number(video.statistics.viewCount || 0),
+          publishedAt: video.snippet.publishedAt
+        };
+      })
+      .filter(v => v.durationSec > 0 && v.durationSec <= 60);
+
+    return shorts;
   } catch (err) {
-    console.error("🔥 YouTube fetch failed:", err.message);
+    console.error("🔥 Shorts fetch failed:", err.message);
     return [];
   }
 }
@@ -43,7 +72,6 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url, `http://${req.headers.host}`);
 
-  // Health check
   if (url.pathname === "/") {
     return res.end(
       JSON.stringify({
@@ -54,9 +82,8 @@ const server = http.createServer(async (req, res) => {
     );
   }
 
-  // Shorts endpoint
   if (url.pathname === "/shorts") {
-    const shorts = await fetchShorts();
+    const shorts = await fetchShortsOnly();
 
     return res.end(
       JSON.stringify({
