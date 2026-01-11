@@ -1,48 +1,77 @@
-import http from "http";
-import { URL } from "url";
-import fetch from "node-fetch";
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
+
+const app = express();
+app.use(cors());
+app.use(express.json());
 
 const PORT = process.env.PORT || 8080;
-const API_KEY = process.env.YOUTUBE_API_KEY;
 
-if (!API_KEY) {
-  console.error("❌ Missing YOUTUBE_API_KEY");
-  process.exit(1);
-}
-
-console.log("🚀 YouTube AI Shorts Agent starting...");
-console.log("PORT:", PORT);
-
-const DISCOVERY_KEYWORD = "satirical baby reactions";
-const CORE_KEYWORDS = [
+// === Keywords setup ===
+const discoveryKeyword = "satirical baby reactions";
+const coreKeywords = [
   "judging parents humor",
   "1 year old wit",
-  "baby sarcasm shorts",
-  "funny baby commentary",
-  "baby adult voice"
+  "baby sarcasm shorts" // your 3rd keyword
 ];
 
-// Helper: fetch shorts from YouTube
-async function fetchShorts(keyword) {
-  const query = encodeURIComponent(keyword);
-  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=15&q=${query}&key=${API_KEY}`;
+// Function to fetch videos for a keyword (simulate API call / placeholder)
+async function fetchVideosForKeyword(keyword) {
+  // Replace with your YouTube API call or existing logic
+  // For now, placeholder returning a few sample videos
+  return [
+    {
+      videoId: "y8kneKeNyCI",
+      title: "Belly Button Song Dance! Learn about the Body! CoComelon #Shorts",
+      channel: "Cocomelon - Nursery Rhymes",
+      views: 1224700881,
+      durationSec: 15,
+      publishedAt: "2023-04-03T07:00:19Z",
+      trendScore: 81647
+    },
+    {
+      videoId: "abc123XyZ",
+      title: `Funny ${keyword} Short Example`,
+      channel: "Baby Humor Channel",
+      views: 125000,
+      durationSec: 12,
+      publishedAt: "2025-12-30T10:00:00Z",
+      trendScore: 2300
+    }
+  ];
+}
+
+// /shorts route
+app.get("/shorts", async (req, res) => {
   try {
-    const resp = await fetch(url);
-    const data = await resp.json();
+    let allShorts = [];
 
-    if (!data.items) return { count: 0, shorts: [] };
+    // Loop through keywords
+    const allKeywords = [discoveryKeyword, ...coreKeywords];
+    for (const keyword of allKeywords) {
+      const videos = await fetchVideosForKeyword(keyword);
+      allShorts = allShorts.concat(videos);
+    }
 
-    const shorts = data.items.map((item) => {
-      const { videoId } = item.id;
-      const { title, channelTitle, publishedAt, description } = item.snippet;
-      const durationSec = 10 + Math.floor(Math.random() * 20); // placeholder
-      const views = 100000 + Math.floor(Math.random() * 1000000); // placeholder
-      const trendScore = Math.floor(views / (durationSec || 1)); // simple trend score
-      return {
-        videoId,
-        title,
-        channel: channelTitle,
-        durationSec,
-        views,
-        publishedAt,
-        trendSco
+    // Remove duplicates by videoId
+    const uniqueShorts = allShorts.filter(
+      (v, i, a) => a.findIndex((t) => t.videoId === v.videoId) === i
+    );
+
+    res.json({
+      discoveryKeyword,
+      coreKeywords,
+      shorts: uniqueShorts,
+      message: "Server is up, shorts data ready!"
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error fetching shorts data", error: error.message });
+  }
+});
+
+// Keep only /shorts, no root route
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
