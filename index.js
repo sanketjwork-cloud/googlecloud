@@ -1,114 +1,99 @@
-import http from "http";
-import { URL } from "url";
+import express from "express";
+import fetch from "node-fetch";
 
+const app = express();
 const PORT = process.env.PORT || 8080;
-const API_KEY = process.env.YOUTUBE_API_KEY || "";
+const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 
-console.log("🚀 Booting YouTube Trend Agent");
-console.log("PORT:", PORT);
-console.log("API KEY present:", Boolean(API_KEY));
+// ---- Keyword Set (Phase 1 – FIXED) ----
+const DISCOVERY_KEYWORD = "funny baby";
 
-const KEYWORDS = [
-  "baby",
-  "cute baby",
-  "baby laugh",
-  "ai baby",
-  "baby dance"
+const CORE_KEYWORDS = [
+  "sarcastic baby",
+  "baby inner thoughts",
+  "baby judging parents",
+  "baby with adult voice",
+  "baby POV comedy"
 ];
 
-const server = http.createServer(async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Content-Type", "application/json");
+// ---- Health Check ----
+app.get("/", (req, res) => {
+  res.json({
+    status: "ok",
+    message: "YouTube Keyword Search Agent running 🚀",
+    generatedAt: new Date().toISOString()
+  });
+});
 
-  const url = new URL(req.url, `http://${req.headers.host}`);
-
-  // 🔹 Health check
-  if (url.pathname === "/") {
-    return res.end(JSON.stringify({
-      status: "ok",
-      message: "YouTube AI Agent is running 🚀",
-      generatedAt: new Date().toISOString()
-    }));
+// ---- Keyword Search Endpoint ----
+app.get("/search", async (req, res) => {
+  if (!YOUTUBE_API_KEY) {
+    return res.status(500).json({ error: "Missing YOUTUBE_API_KEY" });
   }
 
-  // 🔹 Shorts discovery
-  if (url.pathname === "/shorts") {
-    if (!API_KEY) {
-      return res.end(JSON.stringify({
-        error: "Missing YOUTUBE_API_KEY",
-        count: 0,
-        shorts: []
-      }));
-    }
+  try {
+    const results = [];
 
-    try {
-      const keyword = KEYWORDS[Math.floor(Math.random() * KEYWORDS.length)];
+    // We deliberately limit calls (free tier safe)
+    const keywordsToTest = [DISCOVERY_KEYWORD, ...CORE_KEYWORDS];
 
+    for (const keyword of keywordsToTest) {
       const searchUrl =
-        "https://www.googleapis.com/youtube/v3/search" +
+        `https://www.googleapis.com/youtube/v3/search` +
         `?part=snippet&type=video&maxResults=5&q=${encodeURIComponent(keyword)}` +
-        `&order=viewCount&key=${API_KEY}`;
+        `&key=${YOUTUBE_API_KEY}`;
 
       const searchRes = await fetch(searchUrl);
       const searchData = await searchRes.json();
 
-      if (!searchData.items) {
-        throw new Error("No items returned");
+      if (!searchData.items) continue;
+
+      for (const item of searchData.items) {
+        const videoId = item.id.videoId;
+
+        const statsUrl =
+          `https://www.googleapis.com/youtube/v3/videos` +
+          `?part=statistics,contentDetails&id=${videoId}` +
+          `&key=${YOUTUBE_API_KEY}`;
+
+        const statsRes = await fetch(statsUrl);
+        const statsData = await statsRes.json();
+
+        if (!statsData.items || !statsData.items.length) continue;
+
+        const video = statsData.items[0];
+        const views = parseInt(video.statistics.viewCount || "0", 10);
+
+        // Only videos that prove demand
+        if (views >= 100000) {
+          results.push({
+            keyword,
+            videoId,
+            title: item.snippet.title,
+            channel: item.snippet.channelTitle,
+            views,
+            publishedAt: item.snippet.publishedAt
+          });
+        }
       }
-
-      const videoIds = searchData.items.map(v => v.id.videoId).join(",");
-
-      const detailsUrl =
-        "https://www.googleapis.com/youtube/v3/videos" +
-        `?part=snippet,statistics,contentDetails&id=${videoIds}` +
-        `&key=${API_KEY}`;
-
-      const detailsRes = await fetch(detailsUrl);
-      const detailsData = await detailsRes.json();
-
-      const shorts = detailsData.items
-        .map(v => {
-          const duration = v.contentDetails.duration;
-          const seconds =
-            parseInt(duration.match(/(\d+)S/)?.[1] || 0) +
-            (parseInt(duration.match(/(\d+)M/)?.[1] || 0) * 60);
-
-          return {
-            videoId: v.id,
-            title: v.snippet.title,
-            channel: v.snippet.channelTitle,
-            views: Number(v.statistics.viewCount || 0),
-            durationSec: seconds,
-            publishedAt: v.snippet.publishedAt,
-            trendScore: Math.round(
-              (Number(v.statistics.viewCount || 0) / Math.max(seconds, 1)) / 1000
-            )
-          };
-        })
-        .filter(v => v.durationSec <= 15 && v.views >= 100000)
-        .sort((a, b) => b.trendScore - a.trendScore);
-
-      return res.end(JSON.stringify({
-        generatedAt: new Date().toISOString(),
-        keywordUsed: keyword,
-        count: shorts.length,
-        shorts
-      }));
-
-    } catch (err) {
-      console.error("❌ Shorts error:", err.message);
-      return res.end(JSON.stringify({
-        error: "Failed to fetch shorts",
-        count: 0,
-        shorts: []
-      }));
     }
-  }
 
-  res.statusCode = 404;
-  res.end(JSON.stringify({ error: "Not found" }));
+    res.json({
+      generatedAt: new Date().toISOString(),
+      keywordsTested: keywordsToTest,
+      count: results.length,
+      videos: results
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      error: "Search failed",
+      details: error.message
+    });
+  }
 });
 
-server.listen(PORT, () => {
-  console.log(`✅ Server listening on port ${PORT}`);
+// ---- Start Server ----
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
