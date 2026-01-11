@@ -1,45 +1,39 @@
-import express from "express";
-import cors from "cors";
+app.get("/shorts", async (req, res) => {
+  try {
+    const API_KEY = process.env.YOUTUBE_API_KEY;
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+    const query = req.query.q || "AI baby cute";
+    const maxResults = 25;
 
-const PORT = process.env.PORT || 8080;
+    const searchUrl =
+      `https://www.googleapis.com/youtube/v3/search` +
+      `?part=snippet` +
+      `&type=video` +
+      `&videoDuration=short` +
+      `&order=viewCount` +
+      `&q=${encodeURIComponent(query)}` +
+      `&maxResults=${maxResults}` +
+      `&key=${API_KEY}`;
 
-app.get("/", (req, res) => {
-  res.json({
-    status: "ok",
-    message: "YouTube AI Agent is running 🚀",
-    generatedAt: new Date().toISOString()
-  });
-});
+    const searchRes = await fetch(searchUrl);
+    const searchData = await searchRes.json();
 
-app.get("/health", (req, res) => {
-  res.status(200).send("healthy");
-});
+    const shorts = (searchData.items || []).map(v => ({
+      videoId: v.id.videoId,
+      title: v.snippet.title,
+      channel: v.snippet.channelTitle,
+      publishedAt: v.snippet.publishedAt,
+      videoUrl: `https://youtube.com/shorts/${v.id.videoId}`
+    }));
 
-app.get("/discover", async (req, res) => {
-  res.json({
-    generatedAt: new Date().toISOString(),
-    niche: "AI Baby / Cute / Healing",
-    shorts: [
-      {
-        title: "AI Baby Laughing 😂",
-        hook: "Wait till the end 😳",
-        duration: "7s",
-        style: "cute + loop"
-      },
-      {
-        title: "Baby Dance in AI World 💃",
-        hook: "This is too smooth",
-        duration: "6s",
-        style: "dance + beat sync"
-      }
-    ]
-  });
-});
+    res.json({
+      generatedAt: new Date().toISOString(),
+      keyword: query,
+      count: shorts.length,
+      shorts
+    });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
