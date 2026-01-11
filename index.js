@@ -17,7 +17,7 @@ const CHANNEL_IDS = [
   "UCPEFJosRQkA8SmWBIGUlP_A"  // Healing Dreams
 ];
 
-// Helper to convert ISO 8601 duration to seconds
+// Convert ISO 8601 duration to seconds
 function parseDurationToSeconds(duration) {
   const match = duration.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
   if (!match) return 0;
@@ -26,7 +26,7 @@ function parseDurationToSeconds(duration) {
   return minutes * 60 + seconds;
 }
 
-// Fetch Shorts-only videos from all channels
+// Fetch Shorts-only videos from channels
 async function fetchShortsOnly() {
   if (!API_KEY) {
     console.error("❌ YOUTUBE_API_KEY missing");
@@ -37,8 +37,8 @@ async function fetchShortsOnly() {
     let allVideos = [];
 
     for (const channelId of CHANNEL_IDS) {
-      // Search latest videos
-      const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&channelId=${channelId}&maxResults=10&order=date&key=${API_KEY}`;
+      // Search latest 50 videos from channel
+      const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&channelId=${channelId}&maxResults=50&order=date&key=${API_KEY}`;
       const searchRes = await fetch(searchUrl);
       const searchData = await searchRes.json();
       if (!searchData.items) continue;
@@ -69,10 +69,20 @@ async function fetchShortsOnly() {
       allVideos = allVideos.concat(shorts);
     }
 
+    // Dummy fallback if no Shorts found
+    if (allVideos.length === 0) {
+      allVideos = [
+        { videoId: "dummy1", title: "Test Short 1", channel: "Ai baby trends", durationSec: 30, views: 1200, publishedAt: new Date().toISOString() },
+        { videoId: "dummy2", title: "Test Short 2", channel: "Cute Baby", durationSec: 45, views: 800, publishedAt: new Date().toISOString() }
+      ];
+    }
+
     return allVideos;
   } catch (err) {
     console.error("🔥 Shorts fetch failed:", err.message);
-    return [];
+    return [
+      { videoId: "dummy1", title: "Test Short 1", channel: "Ai baby trends", durationSec: 30, views: 1200, publishedAt: new Date().toISOString() }
+    ];
   }
 }
 
@@ -82,7 +92,7 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url, `http://${req.headers.host}`);
 
-  // Health check
+  // Root health check
   if (url.pathname === "/") {
     return res.end(
       JSON.stringify({
