@@ -9,6 +9,15 @@ console.log("🚀 Booting YouTube AI Agent...");
 console.log("PORT:", PORT);
 console.log("API KEY present:", Boolean(API_KEY));
 
+// Real channels to track
+const CHANNEL_IDS = [
+  "UCYOFR8S4AU2UbEyhoPvEFiA", // Ai baby trends
+  "UCUEGP4m4tQi-aWJ2G1npNcg", // Cute Baby
+  "UCqoP7gx5GR9SxbiDfXNn1qA", // Baby dance
+  "UCPEFJosRQkA8SmWBIGUlP_A"  // Healing Dreams
+];
+
+// Helper to convert ISO 8601 duration to seconds
 function parseDurationToSeconds(duration) {
   const match = duration.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
   if (!match) return 0;
@@ -17,49 +26,50 @@ function parseDurationToSeconds(duration) {
   return minutes * 60 + seconds;
 }
 
+// Fetch Shorts-only videos from all channels
 async function fetchShortsOnly() {
-  if (!API_KEY) return [];
+  if (!API_KEY) {
+    console.error("❌ YOUTUBE_API_KEY missing");
+    return [];
+  }
 
   try {
-    // 1️⃣ Search videos
-    const searchUrl =
-      `https://www.googleapis.com/youtube/v3/search?` +
-      `part=snippet&type=video&maxResults=10&q=shorts&key=${API_KEY}`;
+    let allVideos = [];
 
-    const searchRes = await fetch(searchUrl);
-    const searchData = await searchRes.json();
+    for (const channelId of CHANNEL_IDS) {
+      // Search latest videos
+      const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&channelId=${channelId}&maxResults=10&order=date&key=${API_KEY}`;
+      const searchRes = await fetch(searchUrl);
+      const searchData = await searchRes.json();
+      if (!searchData.items) continue;
 
-    if (!searchData.items) return [];
+      const videoIds = searchData.items.map(v => v.id.videoId).join(",");
+      if (!videoIds) continue;
 
-    const videoIds = searchData.items.map(v => v.id.videoId).join(",");
+      const detailsUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,statistics,snippet&id=${videoIds}&key=${API_KEY}`;
+      const detailsRes = await fetch(detailsUrl);
+      const detailsData = await detailsRes.json();
+      if (!detailsData.items) continue;
 
-    // 2️⃣ Fetch video details
-    const detailsUrl =
-      `https://www.googleapis.com/youtube/v3/videos?` +
-      `part=contentDetails,statistics,snippet&id=${videoIds}&key=${API_KEY}`;
+      // Filter Shorts (≤60 seconds)
+      const shorts = detailsData.items
+        .map(video => {
+          const durationSec = parseDurationToSeconds(video.contentDetails.duration);
+          return {
+            videoId: video.id,
+            title: video.snippet.title,
+            channel: video.snippet.channelTitle,
+            durationSec,
+            views: Number(video.statistics.viewCount || 0),
+            publishedAt: video.snippet.publishedAt
+          };
+        })
+        .filter(v => v.durationSec > 0 && v.durationSec <= 60);
 
-    const detailsRes = await fetch(detailsUrl);
-    const detailsData = await detailsRes.json();
+      allVideos = allVideos.concat(shorts);
+    }
 
-    if (!detailsData.items) return [];
-
-    // 3️⃣ Filter Shorts (≤ 60s)
-    const shorts = detailsData.items
-      .map(video => {
-        const durationSec = parseDurationToSeconds(video.contentDetails.duration);
-
-        return {
-          videoId: video.id,
-          title: video.snippet.title,
-          channel: video.snippet.channelTitle,
-          durationSec,
-          views: Number(video.statistics.viewCount || 0),
-          publishedAt: video.snippet.publishedAt
-        };
-      })
-      .filter(v => v.durationSec > 0 && v.durationSec <= 60);
-
-    return shorts;
+    return allVideos;
   } catch (err) {
     console.error("🔥 Shorts fetch failed:", err.message);
     return [];
@@ -72,6 +82,7 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url, `http://${req.headers.host}`);
 
+  // Health check
   if (url.pathname === "/") {
     return res.end(
       JSON.stringify({
@@ -82,6 +93,7 @@ const server = http.createServer(async (req, res) => {
     );
   }
 
+  // Shorts endpoint
   if (url.pathname === "/shorts") {
     const shorts = await fetchShortsOnly();
 
