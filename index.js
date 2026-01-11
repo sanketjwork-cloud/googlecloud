@@ -5,80 +5,35 @@ import fetch from "node-fetch";
 const PORT = process.env.PORT || 8080;
 const API_KEY = process.env.YOUTUBE_API_KEY;
 
-console.log("🚀 Booting YouTube AI Agent...");
-console.log("PORT:", PORT);
-console.log("API KEY present:", Boolean(API_KEY));
+if (!API_KEY) {
+  console.error("❌ YOUTUBE_API_KEY not set");
+}
 
-// Keyword search
-const SEARCH_KEYWORD = "baby";
+const KEYWORDS = [
+  "baby",
+  "cute baby",
+  "funny baby",
+  "AI baby",
+  "baby viral"
+];
 
-// Minimum views to consider trending
-const MIN_VIEWS = 100000;
-
-// Convert ISO 8601 duration to seconds
-function parseDurationToSeconds(duration) {
-  const match = duration.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
+// ---- Helpers ----
+function parseISODurationToSeconds(iso) {
+  const match = iso.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
   if (!match) return 0;
   const minutes = parseInt(match[1] || "0", 10);
   const seconds = parseInt(match[2] || "0", 10);
   return minutes * 60 + seconds;
 }
 
-// Fetch trending baby videos
-async function fetchTrendingBabyVideos() {
-  if (!API_KEY) {
-    console.error("❌ YOUTUBE_API_KEY missing");
-    return [];
-  }
-
-  try {
-    // Search videos by keyword (maxResults=50)
-    const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&q=${encodeURIComponent(
-      SEARCH_KEYWORD
-    )}&maxResults=50&order=viewCount&key=${API_KEY}`;
-
-    const searchRes = await fetch(searchUrl);
-    const searchData = await searchRes.json();
-    if (!searchData.items) return [];
-
-    const videoIds = searchData.items.map(v => v.id.videoId).join(",");
-    if (!videoIds) return [];
-
-    const detailsUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id=${videoIds}&key=${API_KEY}`;
-    const detailsRes = await fetch(detailsUrl);
-    const detailsData = await detailsRes.json();
-    if (!detailsData.items) return [];
-
-    // Filter videos with views >= MIN_VIEWS
-    const trendingVideos = detailsData.items
-      .map(video => {
-        const durationSec = parseDurationToSeconds(video.contentDetails.duration);
-        return {
-          videoId: video.id,
-          title: video.snippet.title,
-          channel: video.snippet.channelTitle,
-          durationSec,
-          views: Number(video.statistics.viewCount || 0),
-          publishedAt: video.snippet.publishedAt,
-          description: video.snippet.description
-        };
-      })
-      .filter(v => v.views >= MIN_VIEWS); // only trending by views
-
-    return trendingVideos;
-  } catch (err) {
-    console.error("🔥 Fetch failed:", err.message);
-    return [];
-  }
-}
-
+// ---- Server ----
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Content-Type", "application/json");
 
   const url = new URL(req.url, `http://${req.headers.host}`);
 
-  // Root health check
+  // Health check
   if (url.pathname === "/") {
     return res.end(
       JSON.stringify({
@@ -89,41 +44,82 @@ const server = http.createServer(async (req, res) => {
     );
   }
 
-  // Shorts endpoint
+  // Shorts-style trending baby videos
   if (url.pathname === "/shorts") {
-    const shorts = await fetchTrendingBabyVideos();
+    try {
+      let collected = [];
 
-    // Fallback dummy videos if none found
-    const result = shorts.length
-      ? shorts
-      : [
-          {
-            videoId: "dummy1",
-            title: "Trending Baby Short 1",
-            channel: "AI Baby Trends",
-            durationSec: 12,
-            views: 150000,
-            publishedAt: new Date().toISOString(),
-            description: "Dummy fallback video"
-          },
-          {
-            videoId: "dummy2",
-            title: "Trending Baby Short 2",
-            channel: "Cute Baby",
-            durationSec: 10,
-            views: 200000,
-            publishedAt: new Date().toISOString(),
-            description: "Dummy fallback video"
+      for (const keyword of KEYWORDS) {
+        const searchUrl =
+          `https://www.googleapis.com/youtube/v3/search` +
+          `?part=snippet` +
+          `&q=${encodeURIComponent(keyword)}` +
+          `&type=video` +
+          `&videoDuration=short` +
+          `&order=viewCount` +
+          `&maxResults=10` +
+          `&key=${API_KEY}`;
+
+        const searchRes = await fetch(searchUrl);
+        const searchData = await searchRes.json();
+
+        if (!searchData.items) continue;
+
+        const videoIds = searchData.items
+          .map(v => v.id.videoId)
+          .filter(Boolean)
+          .join(",");
+
+        if (!videoIds) continue;
+
+        const detailsUrl =
+          `https://www.googleapis.com/youtube/v3/videos` +
+          `?part=contentDetails,statistics,snippet` +
+          `&id=${videoIds}` +
+          `&key=${API_KEY}`;
+
+        const detailsRes = await fetch(detailsUrl);
+        const detailsData = await detailsRes.json();
+
+        if (!detailsData.items) continue;
+
+        for (const video of detailsData.items) {
+          const durationSec = parseISODurationToSeconds(
+            video.contentDetails.duration
+          );
+          const views = Number(video.statistics.viewCount || 0);
+
+          // FINAL FILTERS
+          if (durationSec <= 15 && views >= 100000) {
+            collected.push({
+              videoId: video.id,
+              title: video.snippet.title,
+              channel: video.snippet.channelTitle,
+              durationSec,
+              views,
+              publishedAt: video.snippet.publishedAt,
+              description: video.snippet.description
+            });
           }
-        ];
+        }
+      }
 
-    return res.end(
-      JSON.stringify({
-        generatedAt: new Date().toISOString(),
-        count: result.length,
-        shorts: result
-      })
-    );
+      return res.end(
+        JSON.stringify({
+          generatedAt: new Date().toISOString(),
+          count: collected.length,
+          shorts: collected
+        })
+      );
+    } catch (err) {
+      console.error("❌ Error fetching videos:", err);
+      res.statusCode = 500;
+      return res.end(
+        JSON.stringify({
+          error: "Failed to fetch trending baby videos"
+        })
+      );
+    }
   }
 
   res.statusCode = 404;
